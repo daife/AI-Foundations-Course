@@ -1,3 +1,4 @@
 .conda/
 prog*/results/
 outputs.zip
+__pycache__/
