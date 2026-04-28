@@ -1,99 +1,177 @@
-import random
-import pandas as pd
+import argparse
+from pathlib import Path
+
 import numpy as np
+import pandas as pd
 from sklearn import preprocessing
 
 
-#随机初始化中心点
-def kMeansInitCentroids(X, k):
-    #从X的数据中随机取k个作为中心点
-    index=np.random.randint(0,len(X-1),k)
-    return X[index]
+BASE_DIR = Path(__file__).resolve().parent
+DATA_FILE = BASE_DIR / "fooddata.xlsx"
+RESULT_DIR = BASE_DIR / "results"
 
-#计算数据点到中心点的距离，并判断该数据点属于哪个中心点
+
+def kMeansInitCentroids(X, k, random_state=None):
+    """随机选择 k 个样本作为初始聚类中心。"""
+    X = np.asarray(X, dtype=float)
+    if k <= 0:
+        raise ValueError("k must be a positive integer")
+    if k > len(X):
+        raise ValueError("k cannot be greater than the number of samples")
+
+    rng = np.random.default_rng(random_state)
+    indices = rng.choice(len(X), size=k, replace=False)
+    return X[indices].copy()
+
+
 def findClosestCentroids(X, centroids):
-    #idx中数据表明对应X的数据是属于哪一个中心点的，创建数组idx
-    idx = np.zeros(len(X))
-#TODO: 补充代码，返回每个数据点属于的聚类中心
-    
+    """返回每个样本距离最近的聚类中心编号。"""
+    X = np.asarray(X, dtype=float)
+    centroids = np.asarray(centroids, dtype=float)
+
+    squared_distances = np.sum((X[:, np.newaxis, :] - centroids[np.newaxis, :, :]) ** 2, axis=2)
+    return np.argmin(squared_distances, axis=1).astype(int)
 
 
-    return idx
-#重新计算中心点位置
-def computeCentroids(X, idx):
-#TODO:补充代码重新计算中心点位置，返回新的中心点位置
+def computeCentroids(X, idx, k=None, old_centroids=None, random_state=None):
+    """根据当前样本分配结果重新计算聚类中心。"""
+    X = np.asarray(X, dtype=float)
+    idx = np.asarray(idx, dtype=int)
+    if k is None:
+        k = int(idx.max()) + 1
+
+    centroids = np.zeros((k, X.shape[1]), dtype=float)
+    rng = np.random.default_rng(random_state)
+
+    for cluster_id in range(k):
+        members = X[idx == cluster_id]
+        if len(members) > 0:
+            centroids[cluster_id] = members.mean(axis=0)
+        elif old_centroids is not None:
+            centroids[cluster_id] = old_centroids[cluster_id]
+        else:
+            centroids[cluster_id] = X[rng.integers(0, len(X))]
+
     return centroids
-def k_means(X, k, max_iters):
-#TODO: 补充代码，实现k均值算法
-    
 
 
+def calculate_inertia(X, idx, centroids):
+    """计算聚类目标函数值，即样本到所属中心的平方距离和。"""
+    X = np.asarray(X, dtype=float)
+    return float(np.sum((X - centroids[idx]) ** 2))
 
-    
-    return idx,centroids
+
+def k_means(X, k, max_iters=500, n_init=10, tol=1e-6, random_state=42):
+    """手写 K-means，实现多次随机初始化并返回最优结果。"""
+    X = np.asarray(X, dtype=float)
+    best_idx = None
+    best_centroids = None
+    best_inertia = np.inf
+    rng = np.random.default_rng(random_state)
+
+    for _ in range(n_init):
+        seed = int(rng.integers(0, np.iinfo(np.int32).max))
+        centroids = kMeansInitCentroids(X, k, random_state=seed)
+
+        for _ in range(max_iters):
+            idx = findClosestCentroids(X, centroids)
+            new_centroids = computeCentroids(
+                X,
+                idx,
+                k=k,
+                old_centroids=centroids,
+                random_state=seed,
+            )
+
+            center_shift = np.linalg.norm(new_centroids - centroids)
+            centroids = new_centroids
+            if center_shift <= tol:
+                break
+
+        idx = findClosestCentroids(X, centroids)
+        inertia = calculate_inertia(X, idx, centroids)
+        if inertia < best_inertia:
+            best_idx = idx
+            best_centroids = centroids.copy()
+            best_inertia = inertia
+
+    return best_idx, best_centroids
+
+
+def load_food_data(data_file=DATA_FILE):
+    """读取食物营养数据，并返回原始表与可聚类的数值特征。"""
+    df = pd.read_excel(data_file)
+    df = df.dropna().reset_index(drop=True)
+
+    feature_df = df.drop(columns=["食物名", "序号"], errors="ignore")
+    feature_df = feature_df.apply(pd.to_numeric, errors="coerce")
+
+    valid_rows = feature_df.notna().all(axis=1)
+    df = df.loc[valid_rows].reset_index(drop=True)
+    feature_df = feature_df.loc[valid_rows].reset_index(drop=True)
+    return df, feature_df
+
+
+def preprocess_features(feature_df):
+    """先标准化再归一化，减小不同营养指标量纲差异的影响。"""
+    z_scaler = preprocessing.StandardScaler()
+    data_z = z_scaler.fit_transform(feature_df)
+
+    minmax_scaler = preprocessing.MinMaxScaler()
+    return minmax_scaler.fit_transform(data_z)
+
+
+def build_result_frame(df, labels):
+    result = df.copy()
+    result["类_别"] = labels.astype(int)
+    return result.sort_values(["类_别", "食物名"]).reset_index(drop=True)
+
+
+def save_cluster_result(file_path, result_df):
+    file_path = Path(file_path)
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    result_df.to_csv(file_path, index=False, encoding="utf-8-sig")
+
 
 def savaData(filePath, data):
-    '''
-    用于保存输出结果到指定路径下
-    :param filePath: 保存结果的目的文件路径
-    :param data: 结果数据
-    :return:
-    '''
-    file = open(filePath, 'w+', encoding='utf-8')  # 注意规定编码格式
-    file.write(str(data))  # 写入结果数据
-    file.close()
+    """保留原参考代码中的函数名，兼容旧调用。"""
+    Path(filePath).write_text(str(data), encoding="utf-8")
 
 
-# 读取数据并删除非数为聚类做准备
-df = pd.read_excel('./fooddata.xlsx')  # 读入表格数据
-df1 = df.dropna()  # 删除含有数据缺失的行
-# print(df1.head())  # 输出表格前5行`
-data = df1.drop('食物名', axis=1, inplace=False)  # 删除'食物名'列 axis=0代表删除行,1代表删除列 inplace=False代表不改变原表 True代表改变原表
-data = data.drop('序号', axis=1, inplace=False)  # 删除'序号'列
-# print(data.head())
+def run_all_k(data_file=DATA_FILE, output_dir=RESULT_DIR, min_k=2, max_k=12, random_state=42):
+    df, feature_df = load_food_data(data_file)
+    data = preprocess_features(feature_df)
+
+    summaries = []
+    for k in range(min_k, max_k + 1):
+        labels, centroids = k_means(data, k, max_iters=500, n_init=20, random_state=random_state)
+        result_df = build_result_frame(df, labels)
+        output_file = Path(output_dir) / f"kmeans_result{k}.csv"
+        save_cluster_result(output_file, result_df)
+
+        inertia = calculate_inertia(data, labels, centroids)
+        summaries.append({"k": k, "inertia": inertia, "output": str(output_file)})
+        print(f"k={k}, inertia={inertia:.6f}, saved to {output_file}")
+
+    return pd.DataFrame(summaries)
 
 
-# 数据标准化
-z_scaler = preprocessing.StandardScaler()
-data_z = z_scaler.fit_transform(data)
-data_z = pd.DataFrame(data_z)
+def parse_args():
+    parser = argparse.ArgumentParser(description="Manual K-means clustering for food nutrition data.")
+    parser.add_argument("--data", type=Path, default=DATA_FILE, help="Path to fooddata.xlsx")
+    parser.add_argument("--output-dir", type=Path, default=RESULT_DIR, help="Directory for result CSV files")
+    parser.add_argument("--min-k", type=int, default=2, help="Minimum k")
+    parser.add_argument("--max-k", type=int, default=12, help="Maximum k")
+    parser.add_argument("--random-state", type=int, default=42, help="Random seed")
+    return parser.parse_args()
 
 
-# 数据归一化
-minmax_scale = preprocessing.MinMaxScaler().fit(data_z)
-dataa = minmax_scale.transform(data_z)
-# print(pd.DataFrame(dataa).head())
-
-idx,centroids = k_means(dataa, 8, 500)
-label=[int(idx_item) for idx_item in idx]
-# print(idx)
-# print(centroids)
-print(label)
-
-
-data1 = df1['食物名']
-data2 = data1.values
-
-
-# 查看聚类结果
-dat_type = pd.DataFrame(label)  # 将模型结果导出为数据表
-dat_type.columns = ['类_别']  # 设置列名
-dat = pd.merge(df1, dat_type, left_index=True, right_index=True)  # 合并类别表和数据表
-# print(dat)
-pd.set_option('display.max_rows', None)
-dat.sort_values('类_别')  # 按类别进行排序
-# print(dat.head(10))
-
-
-# 储存聚类结果
-FoodCluster = [[], [], [], [], [],[], [], []]  
-for i in range(len(data2)):
-    FoodCluster[label[i]].append(data2[i])
-
-resultStr = ''  # 保存分类结果
-# 输出分类结果
-for i in range(len(FoodCluster)):
-    print(FoodCluster[i])
-    # 将同分类食物用,拼接
-    resultStr = resultStr + ','.join(FoodCluster[i]) + '\n'
-savaData('kmeans_resultF.csv', resultStr)
+if __name__ == "__main__":
+    args = parse_args()
+    run_all_k(
+        data_file=args.data,
+        output_dir=args.output_dir,
+        min_k=args.min_k,
+        max_k=args.max_k,
+        random_state=args.random_state,
+    )
