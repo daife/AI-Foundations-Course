@@ -5,10 +5,6 @@ import json
 import os
 from pathlib import Path
 
-import matplotlib
-
-matplotlib.use("Agg")
-
 import matplotlib.pyplot as plt
 import numpy as np
 from tqdm import tqdm
@@ -117,17 +113,22 @@ def evaluate_accuracy(pred_labels: np.ndarray, test_label: np.ndarray) -> float:
     return float(np.mean(pred_labels == test_label))
 
 
-def plot_training_sample(binary_data_image: np.ndarray, data_label: np.ndarray, figure_dir: Path) -> Path:
+def finish_figure(output_file: Path, show: bool = True) -> Path:
+    plt.tight_layout()
+    plt.savefig(output_file, dpi=180)
+    if not show:
+        plt.close()
+    return output_file
+
+
+def plot_training_sample(binary_data_image: np.ndarray, data_label: np.ndarray, figure_dir: Path, show: bool = True) -> Path:
     figure_dir.mkdir(parents=True, exist_ok=True)
     output_file = figure_dir / "train_sample.png"
     plt.figure(figsize=(5.6, 4.6))
     plt.imshow(binary_data_image[0].reshape(28, 28), cmap="gray")
     plt.colorbar()
     plt.title(f"Mnist Visualization: Label {data_label[0]}")
-    plt.tight_layout()
-    plt.savefig(output_file, dpi=180)
-    plt.close()
-    return output_file
+    return finish_figure(output_file, show=show)
 
 
 def plot_prediction_samples(
@@ -136,6 +137,7 @@ def plot_prediction_samples(
     pred_labels: np.ndarray,
     figure_dir: Path,
     sample_count: int = 12,
+    show: bool = True,
 ) -> Path:
     figure_dir.mkdir(parents=True, exist_ok=True)
     output_file = figure_dir / "prediction_samples.png"
@@ -149,13 +151,10 @@ def plot_prediction_samples(
         ax.imshow(binary_test_image[i].reshape(28, 28), cmap="gray")
         ax.set_title(f"Predict {pred_labels[i]} / True {test_label[i]}", fontsize=10)
         ax.axis("off")
-    plt.tight_layout()
-    plt.savefig(output_file, dpi=180)
-    plt.close()
-    return output_file
+    return finish_figure(output_file, show=show)
 
 
-def plot_confusion_matrix(matrix: np.ndarray, figure_dir: Path) -> Path:
+def plot_confusion_matrix(matrix: np.ndarray, figure_dir: Path, show: bool = True) -> Path:
     figure_dir.mkdir(parents=True, exist_ok=True)
     output_file = figure_dir / "confusion_matrix.png"
     plt.figure(figsize=(7.2, 6.2))
@@ -173,13 +172,10 @@ def plot_confusion_matrix(matrix: np.ndarray, figure_dir: Path) -> Path:
             color = "white" if matrix[i, j] > threshold else "black"
             plt.text(j, i, str(matrix[i, j]), ha="center", va="center", color=color, fontsize=8)
 
-    plt.tight_layout()
-    plt.savefig(output_file, dpi=180)
-    plt.close()
-    return output_file
+    return finish_figure(output_file, show=show)
 
 
-def plot_threshold_accuracy(threshold_results: list[dict[str, float]], figure_dir: Path) -> Path:
+def plot_threshold_accuracy(threshold_results: list[dict[str, float]], figure_dir: Path, show: bool = True) -> Path:
     figure_dir.mkdir(parents=True, exist_ok=True)
     output_file = figure_dir / "threshold_accuracy.png"
     thresholds = [item["threshold"] for item in threshold_results]
@@ -193,41 +189,7 @@ def plot_threshold_accuracy(threshold_results: list[dict[str, float]], figure_di
     plt.grid(alpha=0.28)
     for x_value, y_value in zip(thresholds, accuracies):
         plt.text(x_value, y_value + 0.002, f"{y_value:.4f}", ha="center", fontsize=8)
-    plt.tight_layout()
-    plt.savefig(output_file, dpi=180)
-    plt.close()
-    return output_file
-
-
-def plot_training_process(summary: dict, figure_dir: Path) -> Path:
-    figure_dir.mkdir(parents=True, exist_ok=True)
-    output_file = figure_dir / "training_process.png"
-    text_lines = [
-        "Command: python prog2/classifier.py --threshold 127.5 --threshold-sweep",
-        f"Train samples: {summary['train_samples']}, Test samples: {summary['test_samples']}",
-        f"Feature dimension: {summary['feature_dim']}, Classes: 10",
-        f"Binarization threshold: {summary['threshold']}, Laplace alpha: {summary['alpha']}",
-        "Prior probabilities:",
-        np.array2string(np.array(summary["priors"]), precision=4, separator=", "),
-        f"Accuracy: {summary['accuracy']:.4f}",
-    ]
-
-    plt.figure(figsize=(11.5, 4.7))
-    plt.axis("off")
-    plt.text(
-        0.02,
-        0.96,
-        "\n".join(text_lines),
-        va="top",
-        ha="left",
-        family="monospace",
-        fontsize=12,
-        linespacing=1.35,
-    )
-    plt.tight_layout()
-    plt.savefig(output_file, dpi=180)
-    plt.close()
-    return output_file
+    return finish_figure(output_file, show=show)
 
 
 def save_predictions(result_dir: Path, pred_labels: np.ndarray, test_label: np.ndarray) -> Path:
@@ -245,6 +207,7 @@ def run_experiment(
     threshold: float = 127.5,
     alpha: float = 1.0,
     threshold_sweep: bool = False,
+    show_visuals: bool = True,
     result_dir: Path = RESULT_DIR,
     figure_dir: Path = FIGURE_DIR,
 ) -> dict:
@@ -252,15 +215,15 @@ def run_experiment(
     binary_data_image = binarize_images(data_image, threshold=threshold)
     binary_test_image = binarize_images(test_image, threshold=threshold)
 
-    plot_training_sample(binary_data_image, data_label, figure_dir)
+    plot_training_sample(binary_data_image, data_label, figure_dir, show=show_visuals)
 
     priors, condition, label_count = train_naive_bayes(binary_data_image, data_label, alpha=alpha)
     pred_labels = predict_batch(binary_test_image, priors, condition)
     accuracy = evaluate_accuracy(pred_labels, test_label)
     matrix = confusion_matrix(test_label, pred_labels)
 
-    plot_prediction_samples(binary_test_image, test_label, pred_labels, figure_dir)
-    plot_confusion_matrix(matrix, figure_dir)
+    plot_prediction_samples(binary_test_image, test_label, pred_labels, figure_dir, show=show_visuals)
+    plot_confusion_matrix(matrix, figure_dir, show=show_visuals)
     save_predictions(result_dir, pred_labels, test_label)
 
     threshold_results = []
@@ -280,7 +243,7 @@ def run_experiment(
                     "accuracy": evaluate_accuracy(item_pred, test_label),
                 }
             )
-        plot_threshold_accuracy(threshold_results, figure_dir)
+        plot_threshold_accuracy(threshold_results, figure_dir, show=show_visuals)
 
     summary = {
         "train_samples": int(len(data_label)),
@@ -294,8 +257,6 @@ def run_experiment(
         "confusion_matrix": matrix.tolist(),
         "threshold_results": threshold_results,
     }
-    plot_training_process(summary, figure_dir)
-
     result_dir.mkdir(parents=True, exist_ok=True)
     summary_file = result_dir / "summary.json"
     summary_file.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -306,6 +267,9 @@ def run_experiment(
     print(f"Accuracy:{accuracy:.4f}")
     print(f"Results saved to {result_dir}")
     print(f"Figures saved to {figure_dir}")
+    if show_visuals:
+        print("Close all matplotlib figure windows to finish the program.")
+        plt.show()
     return summary
 
 
@@ -314,6 +278,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--threshold", type=float, default=127.5, help="Binarization threshold")
     parser.add_argument("--alpha", type=float, default=1.0, help="Laplace smoothing coefficient")
     parser.add_argument("--threshold-sweep", action="store_true", help="Evaluate several thresholds")
+    parser.add_argument("--no-show", action="store_true", help="Save figures without opening matplotlib windows")
     parser.add_argument("--result-dir", type=Path, default=RESULT_DIR, help="Directory for result files")
     parser.add_argument("--figure-dir", type=Path, default=FIGURE_DIR, help="Directory for report figures")
     return parser.parse_args()
@@ -325,6 +290,7 @@ if __name__ == "__main__":
         threshold=args.threshold,
         alpha=args.alpha,
         threshold_sweep=args.threshold_sweep,
+        show_visuals=not args.no_show,
         result_dir=args.result_dir,
         figure_dir=args.figure_dir,
     )
