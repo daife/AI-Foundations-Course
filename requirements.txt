@@ -1,19 +1,12 @@
-# Kaggle Notebook core training environment snapshot:
-# Python: 3.12.12/3.12.13
-# Torch: 2.10.0+cu128
-# Torch CUDA runtime: 12.8
-# cuDNN reported by torch: 91002
-#
-# Create the Python runtime with conda, then install these pip packages:
-#   pip install -r requirements.txt
+# Install into the project-local conda environment:
+#   .\.conda\python.exe -m pip install -r requirements.txt
 
---extra-index-url https://download.pytorch.org/whl/cu128
-
-torch==2.10.0+cu128
-torchvision==0.25.0+cu128
-torchaudio==2.10.0+cu128
-
+# prog1
 numpy
 pandas
 scikit-learn
 openpyxl
+
+# prog2
+matplotlib
+tqdm
