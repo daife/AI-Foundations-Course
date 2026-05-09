@@ -1,5 +1,7 @@
 .conda/
 prog*/results/
+prog*/runs/
+runs/
 outputs.zip
 __pycache__/
 reports/

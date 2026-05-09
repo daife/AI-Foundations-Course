@@ -25,3 +25,5 @@ tqdm
 scikit-image
 
 # prog5
+ultralytics>=8.3.0
+tensorboard
