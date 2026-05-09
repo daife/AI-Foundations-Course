@@ -145,10 +145,19 @@ model_yaml.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 ## 5. Train YOLOv5
 
+Set the device for the full run. Use both T4 GPUs when Kaggle provides them; otherwise use one GPU.
+
+```python
+import torch
+
+TRAIN_DEVICE = "0,1" if torch.cuda.device_count() >= 2 else "0"
+print("TRAIN_DEVICE:", TRAIN_DEVICE)
+```
+
 Formal training for the report:
 
 ```python
-!python prog5/train_yolov5_voc.py
+!python prog5/train_yolov5_voc.py --device {TRAIN_DEVICE} --project runs/detect --name train
 ```
 
 The command above corresponds to:
@@ -172,15 +181,56 @@ model.train(
     scale=0.5,
     multi_scale=True,
     save_period=1,
-    device=0,
+    device=TRAIN_DEVICE,
+    project="runs/detect",
+    name="train",
+    exist_ok=True,
 )
 ```
 
-## 6. TensorBoard
+## 6. Save Training Artifacts
 
 ```python
-%load_ext tensorboard
-%tensorboard --logdir runs/detect/train
+from pathlib import Path
+
+RUN_DIR = Path("runs/detect/train")
+assert RUN_DIR.exists(), f"Missing training output directory: {RUN_DIR}"
+
+important_files = [
+    RUN_DIR / "weights" / "best.pt",
+    RUN_DIR / "weights" / "last.pt",
+    RUN_DIR / "results.csv",
+    RUN_DIR / "results.png",
+    RUN_DIR / "labels.jpg",
+    RUN_DIR / "labels_correlogram.jpg",
+]
+
+for path in important_files:
+    print(path, "OK" if path.exists() else "MISSING")
+```
+
+```python
+from pathlib import Path
+import shutil
+
+OUTPUT_DIR = Path("/kaggle/working/experiment5_outputs")
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+for source in [
+    Path("prog5/voc2007.yaml"),
+    Path("ultralytics/ultralytics/cfg/datasets/yolo.yaml"),
+    Path("ultralytics/ultralytics/cfg/models/v5/yolov5.yaml"),
+    Path("prog5/train_yolov5_voc.py"),
+]:
+    shutil.copy2(source, OUTPUT_DIR / source.name)
+
+shutil.copytree(RUN_DIR, OUTPUT_DIR / "train", dirs_exist_ok=True)
+archive_path = shutil.make_archive(
+    "/kaggle/working/experiment5_outputs",
+    "zip",
+    root_dir=OUTPUT_DIR,
+)
+print("Archive:", archive_path)
 ```
 
 ## 7. View Training Figures
@@ -188,7 +238,6 @@ model.train(
 ```python
 from pathlib import Path
 
-RUN_DIR = Path("runs/detect/train")
 print("Run directory:", RUN_DIR.resolve())
 for path in sorted(RUN_DIR.glob("*")):
     print(path)
@@ -211,4 +260,13 @@ for name in [
     if image_path.exists():
         print(name)
         display(Image(filename=str(image_path)))
+```
+
+## 8. TensorBoard
+
+This cell is useful when opening the notebook interactively after the run. The static figures and zip archive above are the parts needed for `Save & Run All`.
+
+```python
+%load_ext tensorboard
+%tensorboard --logdir runs/detect/train
 ```

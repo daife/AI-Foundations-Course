@@ -10,6 +10,7 @@ from ultralytics import YOLO
 ROOT = Path(__file__).resolve().parent
 DEFAULT_DATA = ROOT.parent / "ultralytics" / "ultralytics" / "cfg" / "datasets" / "yolo.yaml"
 DEFAULT_MODEL = ROOT.parent / "ultralytics" / "ultralytics" / "cfg" / "models" / "v5" / "yolov5.yaml"
+DEFAULT_PROJECT = ROOT.parent / "runs" / "detect"
 
 
 def parse_args() -> argparse.Namespace:
@@ -21,6 +22,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--imgsz", type=int, default=640)
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--device", default="0")
+    parser.add_argument("--project", type=Path, default=DEFAULT_PROJECT)
+    parser.add_argument("--name", default="train")
     parser.add_argument("--save-period", type=int, default=1)
     return parser.parse_args()
 
@@ -74,6 +77,9 @@ def main() -> None:
         multi_scale=True,
         save_period=args.save_period,
         device=train_device,
+        project=str(args.project),
+        name=args.name,
+        exist_ok=True,
     )
 
 
