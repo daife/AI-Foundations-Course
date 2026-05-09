@@ -10,3 +10,6 @@ openpyxl
 # prog2
 matplotlib
 tqdm
+
+# prog3
+scikit-image
