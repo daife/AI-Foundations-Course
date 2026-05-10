@@ -86,10 +86,16 @@ class AlexNet(nn.Module):
         return self.classifier(x)
 
 
-def build_model(num_classes: int, dropout: float, device: torch.device) -> nn.Module:
+def build_model(
+    num_classes: int,
+    dropout: float,
+    device: torch.device,
+    verbose: bool = True,
+) -> nn.Module:
     model = AlexNet(num_classes=num_classes, dropout=dropout).to(device)
     if torch.cuda.is_available() and torch.cuda.device_count() > 1:
-        print(f"Using {torch.cuda.device_count()} CUDA GPUs with DataParallel")
+        if verbose:
+            print(f"Using {torch.cuda.device_count()} CUDA GPUs with DataParallel")
         model = nn.DataParallel(model)
     return model
 
@@ -175,6 +181,8 @@ def train_and_validate(
     epochs: int,
     log_path: Path,
     result_save_path: Path,
+    show_progress: bool = False,
+    verbose: bool = True,
 ) -> list[Metrics]:
     result_save_path.mkdir(parents=True, exist_ok=True)
     log_path.mkdir(parents=True, exist_ok=True)
@@ -188,7 +196,11 @@ def train_and_validate(
             train_loss = 0.0
             correct_train = 0
             total_train = 0
-            train_iter = tqdm(train_loader, desc=f"Epoch {epoch}/{epochs} train")
+            train_iter = tqdm(
+                train_loader,
+                desc=f"Epoch {epoch}/{epochs} train",
+                disable=not show_progress,
+            )
             for images, labels in train_iter:
                 images, labels = images.to(device), labels.to(device)
                 optimizer.zero_grad(set_to_none=True)
@@ -207,7 +219,11 @@ def train_and_validate(
             correct_val = 0
             total_val = 0
             with torch.no_grad():
-                val_iter = tqdm(val_loader, desc=f"Epoch {epoch}/{epochs} val")
+                val_iter = tqdm(
+                    val_loader,
+                    desc=f"Epoch {epoch}/{epochs} val",
+                    disable=not show_progress,
+                )
                 for images, labels in val_iter:
                     images, labels = images.to(device), labels.to(device)
                     outputs = model(images)
@@ -235,7 +251,8 @@ def train_and_validate(
                 f"Train Loss: {row.train_loss:.4f}, Train Acc: {row.train_acc:.2f}%, "
                 f"Val Loss: {row.val_loss:.4f}, Val Acc: {row.val_acc:.2f}%"
             )
-            print(line)
+            if verbose:
+                print(line)
             f.write(line + "\n")
             f.flush()
 
@@ -278,13 +295,15 @@ def test_model(
     criterion: nn.Module,
     device: torch.device,
     result_save_path: Path,
+    show_progress: bool = False,
+    verbose: bool = True,
 ) -> tuple[float, float]:
     model.eval()
     test_loss = 0.0
     correct_test = 0
     total_test = 0
     with torch.no_grad():
-        for images, labels in tqdm(test_loader, desc="test"):
+        for images, labels in tqdm(test_loader, desc="test", disable=not show_progress):
             images, labels = images.to(device), labels.to(device)
             outputs = model(images)
             loss = criterion(outputs, labels)
@@ -296,7 +315,8 @@ def test_model(
     loss_value = test_loss / max(len(test_loader), 1)
     acc_value = 100.0 * correct_test / max(total_test, 1)
     line = f"Test Loss: {loss_value:.4f}, Test Acc: {acc_value:.2f}%"
-    print(line)
+    if verbose:
+        print(line)
     with (result_save_path / "result.txt").open("a", encoding="utf-8") as f:
         f.write(line + "\n")
     return loss_value, acc_value
@@ -376,6 +396,7 @@ def run_visualizations(
     dataset: torch.utils.data.Dataset,
     device: torch.device,
     result_dir: Path,
+    verbose: bool = True,
 ) -> None:
     visualize_filters(model, result_dir / "conv_filter")
     sample_image, _ = dataset[0]
@@ -385,7 +406,8 @@ def run_visualizations(
             continue
         layer_name = f"features.{i}"
         feature_maps = get_feature_maps(model, layer_name, sample_image, device)
-        print(f"Feature map shape from {layer_name}: {tuple(feature_maps.shape)}")
+        if verbose:
+            print(f"Feature map shape from {layer_name}: {tuple(feature_maps.shape)}")
         visualize_feature_maps(feature_maps, layer_name, feature_dir)
 
 
@@ -407,13 +429,19 @@ def run_hyper_parameter_experiments(
     for lr in learning_rates:
         for batch_size in batch_sizes:
             for dropout in dropouts:
-                print(f"Experiment: lr={lr}, batch_size={batch_size}, dropout={dropout}")
+                if not args.quiet:
+                    print(f"Experiment: lr={lr}, batch_size={batch_size}, dropout={dropout}")
                 name = f"lr={lr}_batch_size={batch_size}_dropout={dropout}"
                 train_loader = make_loader(train_dataset, batch_size, True, args.num_workers)
                 val_loader = make_loader(val_dataset, batch_size, False, args.num_workers)
                 test_loader = make_loader(test_dataset, batch_size, False, args.num_workers)
 
-                model = build_model(num_classes=10, dropout=dropout, device=device)
+                model = build_model(
+                    num_classes=10,
+                    dropout=dropout,
+                    device=device,
+                    verbose=not args.quiet,
+                )
                 optimizer = optim.Adam(model.parameters(), lr=lr)
                 metrics = train_and_validate(
                     model=model,
@@ -425,6 +453,8 @@ def run_hyper_parameter_experiments(
                     epochs=args.hparam_epochs,
                     log_path=args.log_dir / name,
                     result_save_path=args.result_dir / f"result_{name}",
+                    show_progress=args.progress,
+                    verbose=not args.quiet,
                 )
                 test_loss, test_acc = test_model(
                     model=model,
@@ -432,6 +462,8 @@ def run_hyper_parameter_experiments(
                     criterion=criterion,
                     device=device,
                     result_save_path=args.result_dir / f"result_{name}",
+                    show_progress=args.progress,
+                    verbose=not args.quiet,
                 )
                 last = metrics[-1]
                 rows.append(
@@ -462,7 +494,8 @@ def run_hyper_parameter_experiments(
                 f"Val Loss: {row['val_loss']:.4f}, Val Acc: {row['val_acc']:.2f}, "
                 f"Test Loss: {row['test_loss']:.4f}, Test Acc: {row['test_acc']:.2f}"
             )
-            print(line)
+            if not args.quiet:
+                print(line)
             f.write(line + "\n")
 
 
@@ -480,6 +513,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--skip-hparam", action="store_true")
     parser.add_argument("--skip-visualization", action="store_true")
+    parser.add_argument("--quiet", action="store_true", help="Reduce console output for Jupyter/Kaggle runs.")
+    parser.add_argument(
+        "--progress",
+        action="store_true",
+        help="Show tqdm batch progress bars. Disabled by default to avoid Jupyter/Kaggle IOStream timeouts.",
+    )
     return parser.parse_args()
 
 
@@ -487,10 +526,11 @@ def main() -> None:
     args = parse_args()
     set_seed(args.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
+    if not args.quiet:
+        print(f"Using device: {device}")
     gpu_count = torch.cuda.device_count() if torch.cuda.is_available() else 0
     gpu_names = [torch.cuda.get_device_name(i) for i in range(gpu_count)]
-    if gpu_count:
+    if gpu_count and not args.quiet:
         print(f"Detected CUDA GPUs: {gpu_count} - {', '.join(gpu_names)}")
 
     dataset = load_dataset(args.data_dir)
@@ -499,7 +539,12 @@ def main() -> None:
     val_loader = make_loader(val_dataset, args.batch_size, False, args.num_workers)
     test_loader = make_loader(test_dataset, args.batch_size, False, args.num_workers)
 
-    model = build_model(num_classes=10, dropout=args.dropout, device=device)
+    model = build_model(
+        num_classes=10,
+        dropout=args.dropout,
+        device=device,
+        verbose=not args.quiet,
+    )
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
     base_result_dir = args.result_dir / "result_base"
@@ -514,8 +559,18 @@ def main() -> None:
         epochs=args.epochs,
         log_path=args.log_dir / "base",
         result_save_path=base_result_dir,
+        show_progress=args.progress,
+        verbose=not args.quiet,
     )
-    test_loss, test_acc = test_model(model, test_loader, criterion, device, base_result_dir)
+    test_loss, test_acc = test_model(
+        model,
+        test_loader,
+        criterion,
+        device,
+        base_result_dir,
+        show_progress=args.progress,
+        verbose=not args.quiet,
+    )
 
     torch.save(unwrap_model(model).state_dict(), base_result_dir / "alexnet_mnist.pth")
     summary = {
@@ -536,7 +591,13 @@ def main() -> None:
         json.dump(summary, f, ensure_ascii=False, indent=2)
 
     if not args.skip_visualization:
-        run_visualizations(unwrap_model(model), dataset, device, args.result_dir)
+        run_visualizations(
+            unwrap_model(model),
+            dataset,
+            device,
+            args.result_dir,
+            verbose=not args.quiet,
+        )
 
     if not args.skip_hparam:
         run_hyper_parameter_experiments(
