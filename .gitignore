@@ -5,3 +5,5 @@ runs/
 outputs.zip
 __pycache__/
 reports/
+prog4/datasets/MNIST/raw/*
+prog4/log/*
