@@ -10,7 +10,7 @@ The script follows the course handout:
 Examples
 --------
 Full base experiment:
-    .\.conda\python.exe prog4\alexnet_mnist.py --epochs 10
+    python prog4/alexnet_mnist.py --epochs 10
 """
 
 from __future__ import annotations
@@ -84,6 +84,22 @@ class AlexNet(nn.Module):
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
         return self.classifier(x)
+
+
+def build_model(num_classes: int, dropout: float, device: torch.device) -> nn.Module:
+    model = AlexNet(num_classes=num_classes, dropout=dropout).to(device)
+    if torch.cuda.is_available() and torch.cuda.device_count() > 1:
+        print(f"Using {torch.cuda.device_count()} CUDA GPUs with DataParallel")
+        model = nn.DataParallel(model)
+    return model
+
+
+def unwrap_model(model: nn.Module) -> AlexNet:
+    if isinstance(model, nn.DataParallel):
+        return model.module
+    if isinstance(model, AlexNet):
+        return model
+    raise TypeError(f"Expected AlexNet or DataParallel[AlexNet], got {type(model)!r}")
 
 
 def set_seed(seed: int) -> None:
@@ -397,7 +413,7 @@ def run_hyper_parameter_experiments(
                 val_loader = make_loader(val_dataset, batch_size, False, args.num_workers)
                 test_loader = make_loader(test_dataset, batch_size, False, args.num_workers)
 
-                model = AlexNet(num_classes=10, dropout=dropout).to(device)
+                model = build_model(num_classes=10, dropout=dropout, device=device)
                 optimizer = optim.Adam(model.parameters(), lr=lr)
                 metrics = train_and_validate(
                     model=model,
@@ -472,6 +488,10 @@ def main() -> None:
     set_seed(args.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
+    gpu_count = torch.cuda.device_count() if torch.cuda.is_available() else 0
+    gpu_names = [torch.cuda.get_device_name(i) for i in range(gpu_count)]
+    if gpu_count:
+        print(f"Detected CUDA GPUs: {gpu_count} - {', '.join(gpu_names)}")
 
     dataset = load_dataset(args.data_dir)
     train_dataset, val_dataset, test_dataset = split_dataset(dataset, args.seed)
@@ -479,7 +499,7 @@ def main() -> None:
     val_loader = make_loader(val_dataset, args.batch_size, False, args.num_workers)
     test_loader = make_loader(test_dataset, args.batch_size, False, args.num_workers)
 
-    model = AlexNet(num_classes=10, dropout=args.dropout).to(device)
+    model = build_model(num_classes=10, dropout=args.dropout, device=device)
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
     base_result_dir = args.result_dir / "result_base"
@@ -497,9 +517,12 @@ def main() -> None:
     )
     test_loss, test_acc = test_model(model, test_loader, criterion, device, base_result_dir)
 
-    torch.save(model.state_dict(), base_result_dir / "alexnet_mnist.pth")
+    torch.save(unwrap_model(model).state_dict(), base_result_dir / "alexnet_mnist.pth")
     summary = {
         "device": str(device),
+        "cuda_gpu_count": gpu_count,
+        "cuda_gpu_names": gpu_names,
+        "data_parallel": isinstance(model, nn.DataParallel),
         "dataset_size": len(dataset),
         "train_size": len(train_dataset),
         "val_size": len(val_dataset),
@@ -513,7 +536,7 @@ def main() -> None:
         json.dump(summary, f, ensure_ascii=False, indent=2)
 
     if not args.skip_visualization:
-        run_visualizations(model, dataset, device, args.result_dir)
+        run_visualizations(unwrap_model(model), dataset, device, args.result_dir)
 
     if not args.skip_hparam:
         run_hyper_parameter_experiments(
