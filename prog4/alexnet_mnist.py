@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import gc
 import json
 import random
 from dataclasses import dataclass, asdict
@@ -425,71 +426,93 @@ def run_hyper_parameter_experiments(
     rows: list[dict[str, float]] = []
     result_all_dir = args.result_dir / "result_all"
     result_all_dir.mkdir(parents=True, exist_ok=True)
+    grid = [
+        (lr, batch_size, dropout)
+        for lr in learning_rates
+        for batch_size in batch_sizes
+        for dropout in dropouts
+    ]
+    hparam_start = max(args.hparam_start, 0)
+    hparam_end = len(grid) if args.hparam_end is None else min(args.hparam_end, len(grid))
+    selected_grid = list(enumerate(grid[hparam_start:hparam_end], start=hparam_start))
 
-    for lr in learning_rates:
-        for batch_size in batch_sizes:
-            for dropout in dropouts:
-                if not args.quiet:
-                    print(f"Experiment: lr={lr}, batch_size={batch_size}, dropout={dropout}")
-                name = f"lr={lr}_batch_size={batch_size}_dropout={dropout}"
-                train_loader = make_loader(train_dataset, batch_size, True, args.num_workers)
-                val_loader = make_loader(val_dataset, batch_size, False, args.num_workers)
-                test_loader = make_loader(test_dataset, batch_size, False, args.num_workers)
+    if not selected_grid:
+        print(f"No hyper-parameter experiments selected. Valid index range is 0..{len(grid) - 1}.")
+        return
 
-                model = build_model(
-                    num_classes=10,
-                    dropout=dropout,
-                    device=device,
-                    verbose=not args.quiet,
-                )
-                optimizer = optim.Adam(model.parameters(), lr=lr)
-                metrics = train_and_validate(
-                    model=model,
-                    train_loader=train_loader,
-                    val_loader=val_loader,
-                    optimizer=optimizer,
-                    criterion=criterion,
-                    device=device,
-                    epochs=args.hparam_epochs,
-                    log_path=args.log_dir / name,
-                    result_save_path=args.result_dir / f"result_{name}",
-                    show_progress=args.progress,
-                    verbose=not args.quiet,
-                )
-                test_loss, test_acc = test_model(
-                    model=model,
-                    test_loader=test_loader,
-                    criterion=criterion,
-                    device=device,
-                    result_save_path=args.result_dir / f"result_{name}",
-                    show_progress=args.progress,
-                    verbose=not args.quiet,
-                )
-                last = metrics[-1]
-                rows.append(
-                    {
-                        "lr": lr,
-                        "batch_size": batch_size,
-                        "dropout": dropout,
-                        "train_loss": last.train_loss,
-                        "train_acc": last.train_acc,
-                        "val_loss": last.val_loss,
-                        "val_acc": last.val_acc,
-                        "test_loss": test_loss,
-                        "test_acc": test_acc,
-                    }
-                )
+    if not args.quiet:
+        print(f"Running hyper-parameter experiments [{hparam_start}, {hparam_end}) of {len(grid)} total.")
 
-    csv_path = result_all_dir / "hparam_results.csv"
+    for exp_idx, (lr, batch_size, dropout) in selected_grid:
+        if not args.quiet:
+            print(f"Experiment {exp_idx}: lr={lr}, batch_size={batch_size}, dropout={dropout}")
+        name = f"idx={exp_idx}_lr={lr}_batch_size={batch_size}_dropout={dropout}"
+        train_loader = make_loader(train_dataset, batch_size, True, args.num_workers)
+        val_loader = make_loader(val_dataset, batch_size, False, args.num_workers)
+        test_loader = make_loader(test_dataset, batch_size, False, args.num_workers)
+
+        model = build_model(
+            num_classes=10,
+            dropout=dropout,
+            device=device,
+            verbose=not args.quiet,
+        )
+        optimizer = optim.Adam(model.parameters(), lr=lr)
+        metrics = train_and_validate(
+            model=model,
+            train_loader=train_loader,
+            val_loader=val_loader,
+            optimizer=optimizer,
+            criterion=criterion,
+            device=device,
+            epochs=args.hparam_epochs,
+            log_path=args.log_dir / name,
+            result_save_path=args.result_dir / f"result_{name}",
+            show_progress=args.progress,
+            verbose=not args.quiet,
+        )
+        test_loss, test_acc = test_model(
+            model=model,
+            test_loader=test_loader,
+            criterion=criterion,
+            device=device,
+            result_save_path=args.result_dir / f"result_{name}",
+            show_progress=args.progress,
+            verbose=not args.quiet,
+        )
+        last = metrics[-1]
+        rows.append(
+            {
+                "index": exp_idx,
+                "lr": lr,
+                "batch_size": batch_size,
+                "dropout": dropout,
+                "train_loss": last.train_loss,
+                "train_acc": last.train_acc,
+                "val_loss": last.val_loss,
+                "val_acc": last.val_acc,
+                "test_loss": test_loss,
+                "test_acc": test_acc,
+            }
+        )
+
+        del model, optimizer, train_loader, val_loader, test_loader, metrics
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    suffix = f"{hparam_start}_{hparam_end}"
+    csv_path = result_all_dir / f"hparam_results_{suffix}.csv"
     with csv_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
         writer.writeheader()
         writer.writerows(rows)
 
-    with (result_all_dir / "result.txt").open("w", encoding="utf-8") as f:
+    with (result_all_dir / f"result_{suffix}.txt").open("w", encoding="utf-8") as f:
         for row in rows:
             line = (
-                f"lr={row['lr']}, batch_size={row['batch_size']}, dropout={row['dropout']} -> "
+                f"index={row['index']}, lr={row['lr']}, "
+                f"batch_size={row['batch_size']}, dropout={row['dropout']} -> "
                 f"Train Loss: {row['train_loss']:.4f}, Train Acc: {row['train_acc']:.2f}, "
                 f"Val Loss: {row['val_loss']:.4f}, Val Acc: {row['val_acc']:.2f}, "
                 f"Test Loss: {row['test_loss']:.4f}, Test Acc: {row['test_acc']:.2f}"
@@ -509,8 +532,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--learning-rate", type=float, default=0.001)
     parser.add_argument("--dropout", type=float, default=0.5)
+    parser.add_argument("--hparam-start", type=int, default=0, help="First hyper-parameter grid index to run.")
+    parser.add_argument("--hparam-end", type=int, default=None, help="Stop before this hyper-parameter grid index.")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--num-workers", type=int, default=0)
+    parser.add_argument("--only-hparam", action="store_true", help="Run only selected hyper-parameter experiments.")
     parser.add_argument("--skip-hparam", action="store_true")
     parser.add_argument("--skip-visualization", action="store_true")
     parser.add_argument("--quiet", action="store_true", help="Reduce console output for Jupyter/Kaggle runs.")
@@ -539,65 +565,72 @@ def main() -> None:
     val_loader = make_loader(val_dataset, args.batch_size, False, args.num_workers)
     test_loader = make_loader(test_dataset, args.batch_size, False, args.num_workers)
 
-    model = build_model(
-        num_classes=10,
-        dropout=args.dropout,
-        device=device,
-        verbose=not args.quiet,
-    )
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
-    base_result_dir = args.result_dir / "result_base"
 
-    metrics = train_and_validate(
-        model=model,
-        train_loader=train_loader,
-        val_loader=val_loader,
-        optimizer=optimizer,
-        criterion=criterion,
-        device=device,
-        epochs=args.epochs,
-        log_path=args.log_dir / "base",
-        result_save_path=base_result_dir,
-        show_progress=args.progress,
-        verbose=not args.quiet,
-    )
-    test_loss, test_acc = test_model(
-        model,
-        test_loader,
-        criterion,
-        device,
-        base_result_dir,
-        show_progress=args.progress,
-        verbose=not args.quiet,
-    )
-
-    torch.save(unwrap_model(model).state_dict(), base_result_dir / "alexnet_mnist.pth")
-    summary = {
-        "device": str(device),
-        "cuda_gpu_count": gpu_count,
-        "cuda_gpu_names": gpu_names,
-        "data_parallel": isinstance(model, nn.DataParallel),
-        "dataset_size": len(dataset),
-        "train_size": len(train_dataset),
-        "val_size": len(val_dataset),
-        "test_size": len(test_dataset),
-        "base_last_epoch": asdict(metrics[-1]),
-        "base_test_loss": test_loss,
-        "base_test_acc": test_acc,
-        "args": {key: str(value) if isinstance(value, Path) else value for key, value in vars(args).items()},
-    }
-    with (base_result_dir / "summary.json").open("w", encoding="utf-8") as f:
-        json.dump(summary, f, ensure_ascii=False, indent=2)
-
-    if not args.skip_visualization:
-        run_visualizations(
-            unwrap_model(model),
-            dataset,
-            device,
-            args.result_dir,
+    if not args.only_hparam:
+        model = build_model(
+            num_classes=10,
+            dropout=args.dropout,
+            device=device,
             verbose=not args.quiet,
         )
+        optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
+        base_result_dir = args.result_dir / "result_base"
+
+        metrics = train_and_validate(
+            model=model,
+            train_loader=train_loader,
+            val_loader=val_loader,
+            optimizer=optimizer,
+            criterion=criterion,
+            device=device,
+            epochs=args.epochs,
+            log_path=args.log_dir / "base",
+            result_save_path=base_result_dir,
+            show_progress=args.progress,
+            verbose=not args.quiet,
+        )
+        test_loss, test_acc = test_model(
+            model,
+            test_loader,
+            criterion,
+            device,
+            base_result_dir,
+            show_progress=args.progress,
+            verbose=not args.quiet,
+        )
+
+        torch.save(unwrap_model(model).state_dict(), base_result_dir / "alexnet_mnist.pth")
+        summary = {
+            "device": str(device),
+            "cuda_gpu_count": gpu_count,
+            "cuda_gpu_names": gpu_names,
+            "data_parallel": isinstance(model, nn.DataParallel),
+            "dataset_size": len(dataset),
+            "train_size": len(train_dataset),
+            "val_size": len(val_dataset),
+            "test_size": len(test_dataset),
+            "base_last_epoch": asdict(metrics[-1]),
+            "base_test_loss": test_loss,
+            "base_test_acc": test_acc,
+            "args": {key: str(value) if isinstance(value, Path) else value for key, value in vars(args).items()},
+        }
+        with (base_result_dir / "summary.json").open("w", encoding="utf-8") as f:
+            json.dump(summary, f, ensure_ascii=False, indent=2)
+
+        if not args.skip_visualization:
+            run_visualizations(
+                unwrap_model(model),
+                dataset,
+                device,
+                args.result_dir,
+                verbose=not args.quiet,
+            )
+
+        del model, optimizer, metrics
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     if not args.skip_hparam:
         run_hyper_parameter_experiments(
