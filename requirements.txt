@@ -28,4 +28,4 @@ scikit-image
 tensorboard
 
 # prog5 不在本地跑，暂时注释掉
-#ultralytics>=8.3.0
+ultralytics>=8.3.0
